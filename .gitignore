@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller 构建中间产物（保留 dist/ 里的 exe 成品）
+build/
+*.spec
+
+# 配置文件（运行时在 %APPDATA% 生成，不入库）
+config.json
+
+# 临时
+*.log
+_grab.py
+
+# exe 成品改用 GitHub Release 分发（避免大文件拖慢 clone）
+dist/
