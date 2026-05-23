@@ -5,8 +5,9 @@ import shlex
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame,
-    QHBoxLayout, QLabel, QLineEdit, QSlider, QSpinBox, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+    QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QSlider, QSpinBox,
+    QVBoxLayout, QWidget,
 )
 
 from config import AppConfig
@@ -58,20 +59,37 @@ class SettingsDialog(QDialog):
         op_lay.addWidget(self.opacity_val)
         form.addRow("不透明度：", op_row)
 
-        # 限额以「百万 token」为单位，避免 QSpinBox int 上限（~2.1B）问题
+        # 限额改用「费用 USD」—— 比 token 更稳（cache read 已按真实定价折算）
         self.limit5_spin = QDoubleSpinBox()
-        self.limit5_spin.setRange(0.1, 100000.0)
-        self.limit5_spin.setDecimals(1)
-        self.limit5_spin.setSuffix(" M tok")
-        self.limit5_spin.setValue(cfg.limit_5h_tokens / 1_000_000)
-        form.addRow("5h 进度条限额：", self.limit5_spin)
+        self.limit5_spin.setRange(0.01, 100000.0)
+        self.limit5_spin.setDecimals(2)
+        self.limit5_spin.setPrefix("$ ")
+        self.limit5_spin.setValue(cfg.limit_5h_cost)
+        form.addRow("5h 费用限额：", self.limit5_spin)
 
         self.limitw_spin = QDoubleSpinBox()
-        self.limitw_spin.setRange(0.1, 100000.0)
-        self.limitw_spin.setDecimals(1)
-        self.limitw_spin.setSuffix(" M tok")
-        self.limitw_spin.setValue(cfg.limit_week_tokens / 1_000_000)
-        form.addRow("7天 进度条限额：", self.limitw_spin)
+        self.limitw_spin.setRange(0.01, 1000000.0)
+        self.limitw_spin.setDecimals(2)
+        self.limitw_spin.setPrefix("$ ")
+        self.limitw_spin.setValue(cfg.limit_week_cost)
+        form.addRow("周费用限额：", self.limitw_spin)
+
+        # 周窗口重置（与官方 /usage 一致）
+        reset_row = QWidget()
+        reset_lay = QHBoxLayout(reset_row)
+        reset_lay.setContentsMargins(0, 0, 0, 0)
+        self.reset_wd = QComboBox()
+        for i, name in enumerate(["周一", "周二", "周三", "周四", "周五", "周六", "周日"]):
+            self.reset_wd.addItem(name, i)
+        self.reset_wd.setCurrentIndex(max(0, min(6, cfg.weekly_reset_weekday)))
+        self.reset_hr = QSpinBox()
+        self.reset_hr.setRange(0, 23)
+        self.reset_hr.setSuffix(" 时")
+        self.reset_hr.setValue(max(0, min(23, cfg.weekly_reset_hour)))
+        reset_lay.addWidget(self.reset_wd)
+        reset_lay.addWidget(self.reset_hr)
+        reset_lay.addStretch(1)
+        form.addRow("周窗口重置：", reset_row)
 
         self.ccusage_edit = QLineEdit(" ".join(_quote_arg(a) for a in cfg.ccusage_cmd))
         self.ccusage_edit.setPlaceholderText("npx -y ccusage")
@@ -84,9 +102,10 @@ class SettingsDialog(QDialog):
         root.addLayout(form)
 
         hint = QLabel(
-            "* 进度条 = 本地估算已用 token ÷ 上面的限额。\n"
-            "  限额无官方精确值，请按自己触发限流时的经验填，\n"
-            "  填得越准，进度条越接近真实占比。"
+            "* 进度条 = ccusage 算的已用费用 ÷ 上面的限额（cost-based，比 token 更稳）。\n"
+            "  校准：用 Claude Code 输入 /usage 看官方百分比，\n"
+            "  「当前费用 ÷ 官方百分比」算出真实限额填进去。\n"
+            "  周重置请与你 /usage 上显示的「Resets …」对齐。"
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color:#666; font-size:11px;")
@@ -122,8 +141,10 @@ class SettingsDialog(QDialog):
             refresh_seconds=self.refresh_spin.value(),
             ccusage_cmd=cmd,
             autostart=self.autostart_chk.isChecked(),
-            limit_5h_tokens=int(self.limit5_spin.value() * 1_000_000),
-            limit_week_tokens=int(self.limitw_spin.value() * 1_000_000),
+            limit_5h_cost=float(self.limit5_spin.value()),
+            limit_week_cost=float(self.limitw_spin.value()),
+            weekly_reset_weekday=int(self.reset_wd.currentData()),
+            weekly_reset_hour=int(self.reset_hr.value()),
             opacity=self.opacity_slider.value(),
         )
 

@@ -25,8 +25,12 @@ class AppConfig:
     pos_y: int = -1
     always_on_top: bool = True
     opacity: int = 92        # 窗口不透明度百分比 (40-100)
-    limit_5h_tokens: int = 38_500_000        # 进度条分母：5h 限额（token），已按官方 /usage 校准
-    limit_week_tokens: int = 2_730_000_000   # 进度条分母：7天限额（token），已按官方 /usage 校准
+    # 进度条分母用「费用 USD」，比 token 更稳（自带 cache read 折扣）
+    limit_5h_cost: float = 34.25         # 5h 费用限额（USD），按官方 /usage 校准
+    limit_week_cost: float = 330.61      # 周费用限额（USD），按官方 /usage 校准
+    # 周窗口重置：与官方 /usage 一致（默认周三 19:00；Mon=0..Sun=6）
+    weekly_reset_weekday: int = 2
+    weekly_reset_hour: int = 19
 
     @classmethod
     def load(cls) -> "AppConfig":

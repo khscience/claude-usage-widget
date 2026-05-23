@@ -1,4 +1,8 @@
-"""数据采集：subprocess 调 ccusage，解析 JSON。"""
+"""数据采集：subprocess 调 ccusage，解析 JSON。
+
+周窗口与官方 /usage 一致：按"上次周重置时刻"为起点累加，而非滚动 7 天。
+重置 weekday/hour 在配置里指定（默认周三 19:00）。
+"""
 from __future__ import annotations
 
 import json
@@ -7,7 +11,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional
 
 from PyQt5.QtCore import QThread, pyqtSignal
@@ -32,17 +36,21 @@ def _resolve_executable(name: str) -> str:
 
 @dataclass
 class UsageSnapshot:
+    # 5h 活跃块（来自 ccusage blocks --active）
     five_hour_tokens: int = 0
-    five_hour_start: Optional[datetime] = None  # UTC，5h 窗口开始时间
-    five_hour_end: Optional[datetime] = None    # UTC，5h 窗口结束时间
-    five_hour_active: bool = False              # 当前是否有活跃 5h 块
-    five_hour_cost: float = 0.0                 # 本 5h 块花费 (USD)
-    burn_rate_tpm: float = 0.0                  # 燃烧速率 tokens/min
+    five_hour_start: Optional[datetime] = None
+    five_hour_end: Optional[datetime] = None
+    five_hour_active: bool = False
+    five_hour_cost: float = 0.0
+    burn_rate_tpm: float = 0.0
+    # 周窗口（自上次周重置起累加）
     weekly_tokens: int = 0
-    weekly_cost: float = 0.0                    # 7天窗口花费 (USD)
-    weekly_oldest: Optional[datetime] = None    # 7天窗口里最早一条记录的日期（UTC 当天 00:00）
-    fetched_at: datetime = None                 # 本快照生成时刻（本地时区）
-    error: Optional[str] = None                 # 非 None 表示采集失败
+    weekly_cost: float = 0.0
+    weekly_window_start: Optional[datetime] = None  # 本周窗口起点(本地时区)
+    weekly_reset_at: Optional[datetime] = None      # 下次重置时刻(本地时区)
+    # 元信息
+    fetched_at: datetime = None
+    error: Optional[str] = None
 
     def __post_init__(self):
         if self.fetched_at is None:
@@ -56,6 +64,23 @@ def _parse_iso(ts: str) -> datetime:
     return datetime.fromisoformat(ts)
 
 
+def last_reset_at(weekday: int, hour: int,
+                  now: Optional[datetime] = None) -> datetime:
+    """返回上一次「每周 weekday hour:00」重置时刻（本地时区）。
+
+    weekday: Python 风格，Mon=0..Sun=6
+    """
+    if now is None:
+        now = datetime.now().astimezone()
+    # 今天的 hour 点
+    today_at = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    days_back = (now.weekday() - weekday) % 7
+    candidate = today_at - timedelta(days=days_back)
+    if candidate > now:
+        candidate -= timedelta(days=7)
+    return candidate
+
+
 class UsageFetcher(QThread):
     """后台线程跑 ccusage，不阻塞 UI。每次 start() 跑一遍后退出。"""
 
@@ -63,9 +88,14 @@ class UsageFetcher(QThread):
 
     TIMEOUT_SECONDS = 30
 
-    def __init__(self, ccusage_cmd: list[str], parent=None):
+    def __init__(self, ccusage_cmd: list[str],
+                 weekly_reset_weekday: int = 2,
+                 weekly_reset_hour: int = 19,
+                 parent=None):
         super().__init__(parent)
         self.ccusage_cmd = list(ccusage_cmd)
+        self.weekly_reset_weekday = weekly_reset_weekday
+        self.weekly_reset_hour = weekly_reset_hour
 
     def run(self) -> None:  # type: ignore[override]
         try:
@@ -87,7 +117,6 @@ class UsageFetcher(QThread):
                 capture_output=True,
                 text=True,
                 timeout=self.TIMEOUT_SECONDS,
-                # Windows 上避免黑色控制台窗口闪现
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 encoding="utf-8",
                 errors="replace",
@@ -113,7 +142,7 @@ class UsageFetcher(QThread):
     def _fetch(self) -> UsageSnapshot:
         snap = UsageSnapshot()
 
-        # 1) 5h 滚动窗口（活跃块）
+        # 1) 5h 活跃块
         blocks_json = self._run_ccusage(["blocks", "--json", "--active"])
         blocks = blocks_json.get("blocks", []) if isinstance(blocks_json, dict) else []
         if blocks:
@@ -131,17 +160,17 @@ class UsageFetcher(QThread):
                         setattr(snap, attr, _parse_iso(ts))
                     except ValueError:
                         pass
-        # 没有活跃块：保持默认 0 / None
 
-        # 2) 7天滚动窗口：聚合 daily 数据
+        # 2) 周窗口：从上次重置时刻起累加（与官方 /usage 同口径）
+        reset = last_reset_at(self.weekly_reset_weekday, self.weekly_reset_hour)
+        snap.weekly_window_start = reset
+        snap.weekly_reset_at = reset + timedelta(days=7)
+
         daily_json = self._run_ccusage(["daily", "--json"])
         days = daily_json.get("daily", []) if isinstance(daily_json, dict) else []
-        # 今天（本地日期，按 UTC 偏移粗略对齐 ccusage 的 period 字段）
-        today_local = datetime.now().astimezone().date()
-        cutoff = today_local - timedelta(days=6)  # 含今天共 7 天
-        weekly_total = 0
-        weekly_cost = 0.0
-        oldest_date = None
+        # 按天近似：包含重置当天（轻微 over-count 重置前那几小时，可接受）
+        cutoff = reset.date()
+        wt = 0; wc = 0.0
         for d in days:
             period = d.get("period")
             if not period:
@@ -150,16 +179,10 @@ class UsageFetcher(QThread):
                 day = datetime.strptime(period, "%Y-%m-%d").date()
             except ValueError:
                 continue
-            if day < cutoff or day > today_local:
+            if day < cutoff:
                 continue
-            weekly_total += int(d.get("totalTokens", 0) or 0)
-            weekly_cost += float(d.get("totalCost", 0.0) or 0.0)
-            if oldest_date is None or day < oldest_date:
-                oldest_date = day
-        snap.weekly_tokens = weekly_total
-        snap.weekly_cost = weekly_cost
-        if oldest_date is not None:
-            snap.weekly_oldest = datetime.combine(
-                oldest_date, datetime.min.time(), tzinfo=timezone.utc
-            )
+            wt += int(d.get("totalTokens", 0) or 0)
+            wc += float(d.get("totalCost", 0.0) or 0.0)
+        snap.weekly_tokens = wt
+        snap.weekly_cost = wc
         return snap

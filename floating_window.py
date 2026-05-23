@@ -118,8 +118,8 @@ class FloatingWindow(QWidget):
 
         # 5h 行
         self.bar_5h, self.cap_5h, self.meta_5h = self._make_row(v, "5h")
-        # 7天 行
-        self.bar_wk, self.cap_wk, self.meta_wk = self._make_row(v, "7d")
+        # 周 行
+        self.bar_wk, self.cap_wk, self.meta_wk = self._make_row(v, "周")
 
     def _make_row(self, parent_layout, tag_text):
         """一行 = [标签 进度条 占比%] + 下方 meta。返回 (bar, caption, meta)。"""
@@ -258,7 +258,12 @@ class FloatingWindow(QWidget):
     def refresh_now(self) -> None:
         if self._fetcher is not None and self._fetcher.isRunning():
             return
-        self._fetcher = UsageFetcher(self.cfg.ccusage_cmd, parent=self)
+        self._fetcher = UsageFetcher(
+            self.cfg.ccusage_cmd,
+            weekly_reset_weekday=self.cfg.weekly_reset_weekday,
+            weekly_reset_hour=self.cfg.weekly_reset_hour,
+            parent=self,
+        )
         self._fetcher.snapshot_ready.connect(self._on_snapshot)
         self._fetcher.start()
 
@@ -336,10 +341,10 @@ class FloatingWindow(QWidget):
             return
 
         now = datetime.now().astimezone()
-        lim5 = max(1, self.cfg.limit_5h_tokens)
-        limw = max(1, self.cfg.limit_week_tokens)
-        pct5 = snap.five_hour_tokens * 100.0 / lim5
-        pctw = snap.weekly_tokens * 100.0 / limw
+        lim5 = max(0.01, self.cfg.limit_5h_cost)
+        limw = max(0.01, self.cfg.limit_week_cost)
+        pct5 = snap.five_hour_cost * 100.0 / lim5
+        pctw = snap.weekly_cost * 100.0 / limw
 
         # 5h
         self._style_bar(self.bar_5h, pct5)
@@ -352,27 +357,26 @@ class FloatingWindow(QWidget):
         else:
             self.meta_5h.setText("空闲")
 
-        # 7天
+        # 周
         self._style_bar(self.bar_wk, pctw)
         self._style_caption(self.cap_wk, pctw)
         self.cap_wk.setText(f"{min(pctw,999):.0f}%")
-        if snap.weekly_oldest:
-            recover = (snap.weekly_oldest + timedelta(days=7)).astimezone()
-            remain = (recover - now).total_seconds()
-            self.meta_wk.setText(f"{_fmt_remaining(remain)}后回收")
+        if snap.weekly_reset_at:
+            remain = (snap.weekly_reset_at - now).total_seconds()
+            self.meta_wk.setText(f"{_fmt_remaining(remain)}后重置")
         else:
-            self.meta_wk.setText("空闲")
+            self.meta_wk.setText("")
 
         self.lbl_foot.setText(f"{snap.fetched_at:%H:%M} 更新")
 
         # 完整信息放 tooltip
         tip = [
-            f"5h : {_fmt_tokens(snap.five_hour_tokens)} / {_fmt_tokens(lim5)}  ({pct5:.0f}%)",
+            f"5h : ${snap.five_hour_cost:.2f} / ${lim5:.2f}  ({pct5:.0f}%)",
         ]
         if snap.five_hour_end and snap.five_hour_active:
             tip.append(f"     重置 {snap.five_hour_end.astimezone():%H:%M}")
-        tip.append(f"7d : {_fmt_tokens(snap.weekly_tokens)} / {_fmt_tokens(limw)}  ({pctw:.0f}%)")
-        if snap.weekly_cost:
-            tip.append(f"     7天估算 ≈ ${snap.weekly_cost:.0f}")
+        tip.append(f"周  : ${snap.weekly_cost:.2f} / ${limw:.2f}  ({pctw:.0f}%)")
+        if snap.weekly_reset_at:
+            tip.append(f"     下次重置 {snap.weekly_reset_at:%m-%d %H:%M}")
         tip.append(f"更新 {snap.fetched_at:%H:%M:%S}")
         self.setToolTip("\n".join(tip))
