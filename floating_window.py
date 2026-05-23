@@ -274,8 +274,12 @@ class FloatingWindow(QWidget):
 
     def show_settings(self) -> None:
         ok = self.last_snapshot is not None and self.last_snapshot.error is None
+        cur5 = self.last_snapshot.five_hour_cost if self.last_snapshot else 0.0
+        curw = self.last_snapshot.weekly_cost if self.last_snapshot else 0.0
         dlg = SettingsDialog(self.cfg, ok, parent=self,
-                             on_opacity_preview=self._preview_opacity)
+                             on_opacity_preview=self._preview_opacity,
+                             current_5h_cost=cur5,
+                             current_week_cost=curw)
         if dlg.exec_():
             new_cfg = dlg.to_config()
             new_cfg.pos_x = self.cfg.pos_x

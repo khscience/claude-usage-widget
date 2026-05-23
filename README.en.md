@@ -75,12 +75,22 @@ Open Claude Code, type `/usage` to see the official percentages, then compute **
 |---|---|
 | Refresh interval | 5–3600 seconds, default 10 |
 | Opacity | 40%–100% slider, live preview |
+| **Subscription tier** | Pro / Max5 / Max20 / Custom — switching auto-fills manual limit presets |
 | **Limit mode** | **Auto-calibrate** (recommended) / Manual |
-| 5h cost limit | Manual-mode denominator (USD), default $34.25; also serves as auto-mode fallback |
-| Weekly cost limit | Same as above, default $330.61 |
+| 5h cost limit | Manual-mode denominator (USD); also serves as auto-mode fallback |
+| Weekly cost limit | Same as above |
+| **Calibrate by /usage** | Type in the official percentages, click apply — back-computes real limits |
 | Weekly reset | Match what your `/usage` shows under "Resets …" (default Wed 19:00) |
 | ccusage command | Default `npx -y ccusage`; if globally installed, just `ccusage` |
 | Run at startup | Writes `HKCU\...\Run`, no admin needed |
+
+### One-shot calibration (recommended once)
+
+1. Open Claude Code, type `/usage`, read the official 5h % and weekly %
+2. Enter both into the "Calibrate by /usage" inputs in Settings
+3. Click "Apply" — the tool back-computes the real limits from your current measured cost, writes them into manual limits, switches tier to **Custom** and disables auto-calibrate
+
+The progress bars will now align with the official numbers. Calibrate again whenever you change tier or feel it has drifted.
 
 > **Why cost instead of tokens?** ccusage's `totalTokens` counts cache reads at full weight (in practice cache reads are ~97% of the total), while Anthropic's rate limit weighs cache reads much lower. A token-based percentage would drift badly. Cost is naturally weighted by real pricing (cache reads are 0.1×), so it's far more stable.
 

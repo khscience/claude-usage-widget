@@ -16,6 +16,17 @@ def config_path() -> Path:
     return Path(base) / "ClaudeUsageWidget" / "config.json"
 
 
+# 订阅档位预设：5h 费用限额 (USD), 周费用限额 (USD)
+# Pro 数据来源：用户实测 /usage 校准 ($34.25 / $330.61)
+# Max5 / Max20 按 Anthropic 命名的"5x / 20x Pro"倍数估算
+TIER_PRESETS: dict[str, tuple[float, float]] = {
+    "Pro":    (34.25,  330.61),
+    "Max5":   (171.25, 1653.05),
+    "Max20":  (685.00, 6612.20),
+    "Custom": (0.0, 0.0),  # 占位：不覆盖现有值
+}
+
+
 @dataclass
 class AppConfig:
     refresh_seconds: int = 10
@@ -25,6 +36,8 @@ class AppConfig:
     pos_y: int = -1
     always_on_top: bool = True
     opacity: int = 92        # 窗口不透明度百分比 (40-100)
+    # 订阅档位（仅作 UI 默认值切换的标签；实际限额以下方两个字段为准）
+    subscription_tier: str = "Pro"       # Pro / Max5 / Max20 / Custom
     # 自动校准：基于历史用量推断限额（默认开），关掉则用下方手动值
     auto_calibrate: bool = True
     # 进度条分母用「费用 USD」，比 token 更稳（自带 cache read 折扣）
