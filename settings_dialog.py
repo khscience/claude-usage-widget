@@ -59,6 +59,12 @@ class SettingsDialog(QDialog):
         op_lay.addWidget(self.opacity_val)
         form.addRow("不透明度：", op_row)
 
+        # 自动校准开关 - 默认开
+        self.auto_chk = QCheckBox("自动校准（基于历史用量推断，推荐）")
+        self.auto_chk.setChecked(cfg.auto_calibrate)
+        self.auto_chk.toggled.connect(self._on_auto_toggled)
+        form.addRow("限额模式：", self.auto_chk)
+
         # 限额改用「费用 USD」—— 比 token 更稳（cache read 已按真实定价折算）
         self.limit5_spin = QDoubleSpinBox()
         self.limit5_spin.setRange(0.01, 100000.0)
@@ -73,6 +79,9 @@ class SettingsDialog(QDialog):
         self.limitw_spin.setPrefix("$ ")
         self.limitw_spin.setValue(cfg.limit_week_cost)
         form.addRow("周费用限额：", self.limitw_spin)
+
+        # 初始化时按 auto 状态启用/禁用手动限额输入
+        self._on_auto_toggled(cfg.auto_calibrate)
 
         # 周窗口重置（与官方 /usage 一致）
         reset_row = QWidget()
@@ -102,10 +111,10 @@ class SettingsDialog(QDialog):
         root.addLayout(form)
 
         hint = QLabel(
-            "* 进度条 = ccusage 算的已用费用 ÷ 上面的限额（cost-based，比 token 更稳）。\n"
-            "  校准：用 Claude Code 输入 /usage 看官方百分比，\n"
-            "  「当前费用 ÷ 官方百分比」算出真实限额填进去。\n"
-            "  周重置请与你 /usage 上显示的「Resets …」对齐。"
+            "* 进度条 = 已用费用 ÷ 限额。\n"
+            "  自动模式：扫历史 5h 块找「提前停手 + 等到重置才再开」的撞限信号，\n"
+            "  这些块的 cost 中位数 ≈ 真实限额；历史不足时回退到下面手动值。\n"
+            "  周窗口同理：P95 of 完整周累计 cost。"
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color:#666; font-size:11px;")
@@ -119,6 +128,11 @@ class SettingsDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self._on_reject)
         root.addWidget(btns)
+
+    def _on_auto_toggled(self, on: bool) -> None:
+        """自动校准开启时禁用手动限额输入（视觉灰化）"""
+        self.limit5_spin.setEnabled(not on)
+        self.limitw_spin.setEnabled(not on)
 
     def _on_opacity_slide(self, v: int) -> None:
         self.opacity_val.setText(f"{v}%")
@@ -141,6 +155,7 @@ class SettingsDialog(QDialog):
             refresh_seconds=self.refresh_spin.value(),
             ccusage_cmd=cmd,
             autostart=self.autostart_chk.isChecked(),
+            auto_calibrate=self.auto_chk.isChecked(),
             limit_5h_cost=float(self.limit5_spin.value()),
             limit_week_cost=float(self.limitw_spin.value()),
             weekly_reset_weekday=int(self.reset_wd.currentData()),

@@ -16,6 +16,8 @@ from typing import Optional
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
+from auto_limit import estimate_5h_limit, estimate_week_limit
+
 
 def _resolve_executable(name: str) -> str:
     """Windows 上 `npx`/`ccusage` 等通常是 `.cmd` 包装脚本。
@@ -48,6 +50,11 @@ class UsageSnapshot:
     weekly_cost: float = 0.0
     weekly_window_start: Optional[datetime] = None  # 本周窗口起点(本地时区)
     weekly_reset_at: Optional[datetime] = None      # 下次重置时刻(本地时区)
+    # 自适应限额（基于历史用量推断）
+    auto_limit_5h: float = 0.0          # 0 表示未估算
+    auto_limit_5h_source: str = ""      # 估算依据的人类可读说明
+    auto_limit_week: float = 0.0
+    auto_limit_week_source: str = ""
     # 元信息
     fetched_at: datetime = None
     error: Optional[str] = None
@@ -91,11 +98,15 @@ class UsageFetcher(QThread):
     def __init__(self, ccusage_cmd: list[str],
                  weekly_reset_weekday: int = 2,
                  weekly_reset_hour: int = 19,
+                 manual_5h_default: float = 34.25,
+                 manual_week_default: float = 330.61,
                  parent=None):
         super().__init__(parent)
         self.ccusage_cmd = list(ccusage_cmd)
         self.weekly_reset_weekday = weekly_reset_weekday
         self.weekly_reset_hour = weekly_reset_hour
+        self.manual_5h_default = manual_5h_default
+        self.manual_week_default = manual_week_default
 
     def run(self) -> None:  # type: ignore[override]
         try:
@@ -142,24 +153,32 @@ class UsageFetcher(QThread):
     def _fetch(self) -> UsageSnapshot:
         snap = UsageSnapshot()
 
-        # 1) 5h 活跃块
-        blocks_json = self._run_ccusage(["blocks", "--json", "--active"])
-        blocks = blocks_json.get("blocks", []) if isinstance(blocks_json, dict) else []
-        if blocks:
-            b = blocks[0]
-            snap.five_hour_tokens = int(b.get("totalTokens", 0) or 0)
-            snap.five_hour_active = bool(b.get("isActive", False))
-            snap.five_hour_cost = float(b.get("costUSD", 0.0) or 0.0)
-            burn = b.get("burnRate") or {}
+        # 1) 拉全部 5h 块（一次调用既拿活跃块也拿历史块）
+        blocks_json = self._run_ccusage(["blocks", "--json"])
+        all_blocks = blocks_json.get("blocks", []) if isinstance(blocks_json, dict) else []
+        active = next((b for b in all_blocks if b.get("isActive")), None)
+        if active:
+            snap.five_hour_tokens = int(active.get("totalTokens", 0) or 0)
+            snap.five_hour_active = True
+            snap.five_hour_cost = float(active.get("costUSD", 0.0) or 0.0)
+            burn = active.get("burnRate") or {}
             snap.burn_rate_tpm = float(burn.get("tokensPerMinute", 0.0) or 0.0)
             for ts_field, attr in (("startTime", "five_hour_start"),
                                    ("endTime", "five_hour_end")):
-                ts = b.get(ts_field)
+                ts = active.get(ts_field)
                 if ts:
                     try:
                         setattr(snap, attr, _parse_iso(ts))
                     except ValueError:
                         pass
+
+        # 1b) 用全部历史块推断 5h 真实限额
+        try:
+            est5, src5 = estimate_5h_limit(all_blocks, self.manual_5h_default)
+            snap.auto_limit_5h = est5
+            snap.auto_limit_5h_source = src5
+        except Exception as e:  # noqa: BLE001
+            snap.auto_limit_5h_source = f"自适应失败: {e}"
 
         # 2) 周窗口：从上次重置时刻起累加（与官方 /usage 同口径）
         reset = last_reset_at(self.weekly_reset_weekday, self.weekly_reset_hour)
@@ -185,4 +204,16 @@ class UsageFetcher(QThread):
             wc += float(d.get("totalCost", 0.0) or 0.0)
         snap.weekly_tokens = wt
         snap.weekly_cost = wc
+
+        # 2b) 用所有 daily 数据推断周真实限额（按完整周聚合）
+        try:
+            estw, srcw = estimate_week_limit(
+                days, self.weekly_reset_weekday, self.weekly_reset_hour,
+                self.manual_week_default,
+            )
+            snap.auto_limit_week = estw
+            snap.auto_limit_week_source = srcw
+        except Exception as e:  # noqa: BLE001
+            snap.auto_limit_week_source = f"自适应失败: {e}"
+
         return snap

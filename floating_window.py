@@ -262,6 +262,8 @@ class FloatingWindow(QWidget):
             self.cfg.ccusage_cmd,
             weekly_reset_weekday=self.cfg.weekly_reset_weekday,
             weekly_reset_hour=self.cfg.weekly_reset_hour,
+            manual_5h_default=self.cfg.limit_5h_cost,
+            manual_week_default=self.cfg.limit_week_cost,
             parent=self,
         )
         self._fetcher.snapshot_ready.connect(self._on_snapshot)
@@ -341,10 +343,23 @@ class FloatingWindow(QWidget):
             return
 
         now = datetime.now().astimezone()
-        lim5 = max(0.01, self.cfg.limit_5h_cost)
-        limw = max(0.01, self.cfg.limit_week_cost)
+        # 选择限额：auto_calibrate=True 且自适应有结果就用自适应，否则用手动
+        if self.cfg.auto_calibrate and snap.auto_limit_5h > 0:
+            lim5 = snap.auto_limit_5h
+            lim5_src = "auto"
+        else:
+            lim5 = max(0.01, self.cfg.limit_5h_cost)
+            lim5_src = "manual"
+        if self.cfg.auto_calibrate and snap.auto_limit_week > 0:
+            limw = snap.auto_limit_week
+            limw_src = "auto"
+        else:
+            limw = max(0.01, self.cfg.limit_week_cost)
+            limw_src = "manual"
         pct5 = snap.five_hour_cost * 100.0 / lim5
         pctw = snap.weekly_cost * 100.0 / limw
+        self._last_lim5 = (lim5, lim5_src, snap.auto_limit_5h_source)
+        self._last_limw = (limw, limw_src, snap.auto_limit_week_source)
 
         # 5h
         self._style_bar(self.bar_5h, pct5)
@@ -370,12 +385,18 @@ class FloatingWindow(QWidget):
         self.lbl_foot.setText(f"{snap.fetched_at:%H:%M} 更新")
 
         # 完整信息放 tooltip
+        mode_tag_5h = "auto" if lim5_src == "auto" else "手动"
+        mode_tag_wk = "auto" if limw_src == "auto" else "手动"
         tip = [
-            f"5h : ${snap.five_hour_cost:.2f} / ${lim5:.2f}  ({pct5:.0f}%)",
+            f"5h : ${snap.five_hour_cost:.2f} / ${lim5:.2f}  ({pct5:.0f}%)  [{mode_tag_5h}]",
         ]
+        if lim5_src == "auto" and snap.auto_limit_5h_source:
+            tip.append(f"     限额来源: {snap.auto_limit_5h_source}")
         if snap.five_hour_end and snap.five_hour_active:
             tip.append(f"     重置 {snap.five_hour_end.astimezone():%H:%M}")
-        tip.append(f"周  : ${snap.weekly_cost:.2f} / ${limw:.2f}  ({pctw:.0f}%)")
+        tip.append(f"周  : ${snap.weekly_cost:.2f} / ${limw:.2f}  ({pctw:.0f}%)  [{mode_tag_wk}]")
+        if limw_src == "auto" and snap.auto_limit_week_source:
+            tip.append(f"     限额来源: {snap.auto_limit_week_source}")
         if snap.weekly_reset_at:
             tip.append(f"     下次重置 {snap.weekly_reset_at:%m-%d %H:%M}")
         tip.append(f"更新 {snap.fetched_at:%H:%M:%S}")

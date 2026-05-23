@@ -25,9 +25,12 @@ class AppConfig:
     pos_y: int = -1
     always_on_top: bool = True
     opacity: int = 92        # 窗口不透明度百分比 (40-100)
+    # 自动校准：基于历史用量推断限额（默认开），关掉则用下方手动值
+    auto_calibrate: bool = True
     # 进度条分母用「费用 USD」，比 token 更稳（自带 cache read 折扣）
-    limit_5h_cost: float = 34.25         # 5h 费用限额（USD），按官方 /usage 校准
-    limit_week_cost: float = 330.61      # 周费用限额（USD），按官方 /usage 校准
+    limit_5h_cost: float = 34.25         # 5h 费用限额（USD）
+                                          # auto=False 时使用；auto=True 时作为历史不足兜底
+    limit_week_cost: float = 330.61      # 周费用限额（USD），同上
     # 周窗口重置：与官方 /usage 一致（默认周三 19:00；Mon=0..Sun=6）
     weekly_reset_weekday: int = 2
     weekly_reset_hour: int = 19
