@@ -16,6 +16,14 @@ from floating_window import FloatingWindow
 
 def main() -> int:
     # 高 DPI 感知：文字/尺寸在缩放屏上清晰，坐标可预测
+    # PassThrough = 直接用真实的 fractional scale，不做四舍五入；
+    # 避免主副屏不同缩放比时拖动跨屏尺寸抽风（默认 Round 在 125%/150% 经常错算）
+    try:
+        QApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
+    except AttributeError:
+        pass  # PyQt5 < 5.14
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)

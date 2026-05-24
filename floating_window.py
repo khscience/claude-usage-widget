@@ -197,14 +197,52 @@ class FloatingWindow(QWidget):
         self.move(screen.right() - self.width() - 20,
                   screen.bottom() - self.height() - 20)
 
+    def _current_screen(self):
+        """返回窗口所在的屏幕（多屏拖动时不锁死主屏）"""
+        h = self.windowHandle()
+        if h is not None:
+            sc = h.screen()
+            if sc is not None:
+                return sc
+        # fallback：按窗口中心点找
+        center = self.frameGeometry().center()
+        sc = QApplication.screenAt(center)
+        return sc if sc is not None else QApplication.primaryScreen()
+
     def _clamp_to_screen(self) -> None:
-        screen = QApplication.primaryScreen().availableGeometry()
+        screen = self._current_screen().availableGeometry()
         x = min(self.x(), screen.right() - self.width() - 4)
         y = min(self.y(), screen.bottom() - self.height() - 4)
         x = max(x, screen.left() + 4)
         y = max(y, screen.top() + 4)
         if (x, y) != (self.x(), self.y()):
             self.move(x, y)
+
+    # ---------- 跨屏 DPI 变化处理 ----------
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        # windowHandle 仅在 show 后存在；首次出现时挂 screenChanged
+        h = self.windowHandle()
+        if h is not None and not getattr(self, "_screen_signal_wired", False):
+            h.screenChanged.connect(self._on_screen_changed)
+            self._screen_signal_wired = True
+
+    def _on_screen_changed(self, _screen) -> None:
+        """跨屏时（DPI 可能变）强制重新布局，避免宽高被旧 DPI 算错"""
+        # 失效布局缓存
+        lay = self.layout()
+        if lay is not None:
+            lay.invalidate()
+        card_lay = self.card.layout()
+        if card_lay is not None:
+            card_lay.invalidate()
+        # 重新让子项按新 DPI 计算 sizeHint
+        self.card.updateGeometry()
+        self.updateGeometry()
+        self.adjustSize()
+        # 防止刚跨屏时一小段时间窗口溢出
+        self._clamp_to_screen()
 
     # ---------- 拖动 ----------
 
